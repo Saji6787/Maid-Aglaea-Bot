@@ -91,6 +91,7 @@ async def close_db_pool():
 # ================= GAME LOBBY STATE =================
 game_lobbies = {}  # chat_id -> {"players": [user_id], "game_type": "wordchain"}
 active_games = {}  # chat_id -> GameSession
+pending_kira_tasks = {}  # (chat_id, user_id) -> asyncio.Task
 
 # ================= BACKGROUND WORKER =================
 async def reminder_worker(bot: Bot):
@@ -473,7 +474,25 @@ async def handle_mentions(message: types.Message):
             if " " not in text:
                 await active_games[chat_id].process_move(user_id, text)
                 return
-        await handle_kira_message(message, pool)
+        
+        # Debounce/Anti-Spam logic
+        user_key = (chat_id, user_id)
+        if user_key in pending_kira_tasks:
+            pending_kira_tasks[user_key].cancel()
+            
+        async def _delayed_kira():
+            try:
+                await asyncio.sleep(7) # Tunggu 7 detik
+                await handle_kira_message(message, pool)
+            except asyncio.CancelledError:
+                # Task dibatalkan karena ada pesan baru, abaikan
+                pass
+            finally:
+                if pending_kira_tasks.get(user_key) == task:
+                    del pending_kira_tasks[user_key]
+        
+        task = asyncio.create_task(_delayed_kira())
+        pending_kira_tasks[user_key] = task
         return
 
     # Group / supergroup
@@ -513,8 +532,23 @@ async def handle_mentions(message: types.Message):
     if not (mentioned or is_reply_to_me):
         return
 
-    # Group @mention or reply → Kira handles it
-    await handle_kira_message(message, pool, bot_username=bot_username)
+    # Group @mention or reply → Kira handles it with debounce
+    user_key = (chat_id, user_id)
+    if user_key in pending_kira_tasks:
+        pending_kira_tasks[user_key].cancel()
+        
+    async def _delayed_kira_group():
+        try:
+            await asyncio.sleep(7)
+            await handle_kira_message(message, pool, bot_username=bot_username)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if pending_kira_tasks.get(user_key) == task:
+                del pending_kira_tasks[user_key]
+                
+    task = asyncio.create_task(_delayed_kira_group())
+    pending_kira_tasks[user_key] = task
     return
 
 

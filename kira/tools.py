@@ -14,6 +14,8 @@ async def add_reminder(pool, user_id: int, remind_at: str, note: str) -> str:
                 )
         return json.dumps({"status": "success", "message": f"Reminder set for {remind_at}"})
     except Exception as e:
+        if "(1146," in str(e):
+            return json.dumps({"error": "Tabel 'reminders_kira' belum dibuat. Silakan buat tabelnya di database terlebih dahulu."})
         logging.error(f"add_reminder error: {e}")
         return json.dumps({"error": str(e)})
 

@@ -1,5 +1,6 @@
 import json
 import os
+import asyncio
 from mistralai.client import Mistral  # type: ignore
 
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
@@ -249,8 +250,14 @@ async def ask_ai(system_prompt: str, message: str, pool=None, user_id: int=None)
                 # If not JSON, wrap it
                 return json.dumps({"messages": [clean_content]})
                     
+        except asyncio.CancelledError:
+            # Silence cancellation errors (handled by debounce)
+            raise
         except Exception as e:
-            return json.dumps({"messages": [f"error: {str(e)}"]})
+            import logging
+            logging.error(f"Mistral AI Error: {e}")
+            # Silently return a subtle placeholder instead of technical "error:"
+            return json.dumps({"messages": ["..."]})
 
     return json.dumps({"messages": ["(AI tidak dikonfigurasi)"]})
 
