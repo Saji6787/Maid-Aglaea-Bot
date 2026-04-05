@@ -85,17 +85,25 @@ async def handle_kira_message(message: types.Message, pool, bot_username: str = 
         send_message = None
 
     if send_to_username and send_message and pool:
+        import logging
+        logging.info(f"Kira attempting to send PM to user: '{send_to_username}'")
         # Check if the target user exists
         target_id = await get_user_id_by_username(pool, send_to_username)
         if target_id:
+            logging.info(f"Target user found: {target_id}")
             try:
                 await message.bot.send_message(chat_id=target_id, text=send_message)
+                logging.info("PM successfully sent.")
                 # Log it in the target's conversation
                 await log_conversation(pool, target_id, "assistant", send_message)
             except Exception as e:
-                import logging
                 logging.warning(f"Failed to send to target: {e}")
+                if "Forbidden" in str(e):
+                     messages = [f"Yah, si @{send_to_username} kayaknya belum PC aku atau aku diblokir sama dia. Programku blom jalan kalau belum dipc"]
+                else:
+                     messages = [f"Gagal kirim ke @{send_to_username}: {e}"]
         else:
+            logging.info(f"Target user '{send_to_username}' NOT found in DB.")
             # Overwrite Kira's reply based on requirements
             messages = [f"Itu si @{send_to_username} pc aku dulu. Programku blom jalan kalau belum dipc"]
 

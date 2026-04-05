@@ -122,7 +122,11 @@ async def reminder_worker(bot: Bot):
                             )
                             await cur.execute("UPDATE reminders_kira SET is_sent = 1 WHERE id = %s", (row['id'],))
                         except Exception as e:
-                            logging.error(f"❌ Error kirim reminder ke {row['user_id']}: {e}")
+                            if "Forbidden" in str(e):
+                                logging.warning(f"⚠️ User {row['user_id']} belum PC bot/memblokir. Reminder ID {row['id']} dibatalkan.")
+                                await cur.execute("UPDATE reminders_kira SET is_sent = 2 WHERE id = %s", (row['id'],)) # 2 = Failed/Forbidden
+                            else:
+                                logging.error(f"❌ Error kirim reminder ke {row['user_id']}: {e}")
                     
                     # Cleanup old messages every minute (or 10 minutes realistically, but this is simple enough)
                     await cur.execute("DELETE FROM reminders_kira WHERE is_sent = 1 AND created_at < NOW() - INTERVAL 1 DAY")

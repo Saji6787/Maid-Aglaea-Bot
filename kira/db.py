@@ -33,16 +33,24 @@ async def get_or_create_user(pool, user_id: int, username: str, first_name: str)
                     (user_id,)
                 )
 
-async def get_user_id_by_username(pool, username: str):
-    """"Get a user's ID by their username (case insensitive)."""
+async def get_user_id_by_username(pool, name_or_username: str):
+    """"Get a user's ID by their username or first_name (case insensitive)."""
     async with pool.acquire() as conn:
-        async with conn.cursor() as cur:
-            if username.startswith('@'):
-                username = username[1:]
-            await cur.execute("SELECT id FROM users WHERE LOWER(username) = LOWER(%s)", (username,))
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            clean_name = name_or_username[1:] if name_or_username.startswith('@') else name_or_username
+            
+            # 1. Try username
+            await cur.execute("SELECT id FROM users WHERE LOWER(username) = LOWER(%s)", (clean_name,))
             res = await cur.fetchone()
             if res:
                 return res['id']
+                
+            # 2. Try first_name
+            await cur.execute("SELECT id FROM users WHERE LOWER(first_name) = LOWER(%s)", (clean_name,))
+            res = await cur.fetchone()
+            if res:
+                return res['id']
+                
             return None
 
 async def get_mood(pool, user_id: int):
