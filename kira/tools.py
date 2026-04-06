@@ -109,3 +109,30 @@ async def get_expenses(pool, user_id: int, date_from: str, date_to: str) -> str:
                 return json.dumps({"expenses": expenses})
     except Exception as e:
         return json.dumps({"error": str(e)})
+
+async def delete_expenses_by_date(pool, user_id: int, date: str) -> str:
+    try:
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("DELETE FROM expenses WHERE user_id = %s AND date = %s", (user_id, date))
+                count = cur.rowcount
+                return json.dumps({"status": "success", "message": f"Berhasil menghapus {count} catatan pengeluaran untuk tanggal {date}."})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+async def add_multiple_expenses(pool, user_id: int, expenses: list) -> str:
+    """Insert multiple expenses at once. expenses = [{amount, description, date}, ...]"""
+    try:
+        if not expenses:
+            return json.dumps({"error": "Daftar pengeluaran kosong"})
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                for item in expenses:
+                    await cur.execute(
+                        "INSERT INTO expenses (user_id, amount, description, date) VALUES (%s, %s, %s, %s)",
+                        (user_id, float(item["amount"]), item["description"], item["date"])
+                    )
+        total = sum(float(i["amount"]) for i in expenses)
+        return json.dumps({"status": "success", "message": f"Berhasil mencatat {len(expenses)} pengeluaran. Total: {total}"})
+    except Exception as e:
+        return json.dumps({"error": str(e)})

@@ -14,7 +14,14 @@ async def setup_db(pool):
     async with pool.acquire() as conn:
         async with conn.cursor() as cur:
             for statement in statements:
-                await cur.execute(statement)
+                try:
+                    await cur.execute(statement)
+                except Exception as e:
+                    # ignore error if table already exists or if we lack CREATE permission
+                    # (1050: table already exists, 1142: command denied)
+                    if "(1050," in str(e) or "(1142," in str(e):
+                        continue
+                    raise e
 
 async def get_or_create_user(pool, user_id: int, username: str, first_name: str):
     async with pool.acquire() as conn:

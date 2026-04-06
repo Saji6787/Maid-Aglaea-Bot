@@ -74,11 +74,13 @@ async def handle_kira_message(message: types.Message, pool, bot_username: str = 
 
     raw = await ask_ai(prompt, text_for_ai, pool=pool, user_id=user_id)
 
+    is_expense_report = False
     try:
         data = json.loads(raw)
         messages = data.get("messages", [raw])
         send_to_username = data.get("send_to_username")
         send_message = data.get("send_message")
+        is_expense_report = data.get("is_expense_report", False)
     except json.JSONDecodeError:
         messages = [raw]
         send_to_username = None
@@ -107,7 +109,15 @@ async def handle_kira_message(message: types.Message, pool, bot_username: str = 
             # Overwrite Kira's reply based on requirements
             messages = [f"Itu si @{send_to_username} pc aku dulu. Programku blom jalan kalau belum dipc"]
 
-    messages = [m for m in messages if m and str(m).strip()][:3]
+    messages = [m for m in messages if m and str(m).strip()]
+
+    # Mood-based message limit:
+    # - Expense report: no limit
+    # - Mood netral/plus (>= 0): tidak ada batas
+    # - Mood minus (< 0): maksimal 3, AI sudah diarahkan untuk jarang kirim >1
+    if not is_expense_report and new_score < 0:
+        messages = messages[:3]
+
     if not messages:
         messages = ["..."]
 

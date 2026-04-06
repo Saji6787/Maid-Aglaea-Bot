@@ -120,7 +120,8 @@ async def reminder_worker(bot: Bot):
                                 chat_id=row['user_id'],
                                 text=f"eh {row['note']}\njangan sampe lupa"
                             )
-                            await cur.execute("UPDATE reminders_kira SET is_sent = 1 WHERE id = %s", (row['id'],))
+                            # Langsung hapus reminder setelah berhasil dikirim
+                            await cur.execute("DELETE FROM reminders_kira WHERE id = %s", (row['id'],))
                         except Exception as e:
                             if "Forbidden" in str(e):
                                 logging.warning(f"⚠️ User {row['user_id']} belum PC bot/memblokir. Reminder ID {row['id']} dibatalkan.")
@@ -128,8 +129,8 @@ async def reminder_worker(bot: Bot):
                             else:
                                 logging.error(f"❌ Error kirim reminder ke {row['user_id']}: {e}")
                     
-                    # Cleanup old messages every minute (or 10 minutes realistically, but this is simple enough)
-                    await cur.execute("DELETE FROM reminders_kira WHERE is_sent = 1 AND created_at < NOW() - INTERVAL 1 DAY")
+                    # Cleanup reminder yang gagal dikirim (Forbidden) setelah 1 hari
+                    await cur.execute("DELETE FROM reminders_kira WHERE is_sent = 2 AND created_at < NOW() - INTERVAL 1 DAY")
         except Exception as e:
             if "(1146," in str(e): # Table doesn't exist
                 logging.warning("⚠️ Tabel reminders_kira belum dibuat. Worker standby...")
@@ -486,7 +487,7 @@ async def handle_mentions(message: types.Message):
             
         async def _delayed_kira():
             try:
-                await asyncio.sleep(7) # Tunggu 7 detik
+                await asyncio.sleep(4) # Tunggu 4 detik
                 await handle_kira_message(message, pool)
             except asyncio.CancelledError:
                 # Task dibatalkan karena ada pesan baru, abaikan

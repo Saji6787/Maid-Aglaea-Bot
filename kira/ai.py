@@ -6,13 +6,13 @@ from mistralai.client import Mistral  # type: ignore
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 mistral_client = Mistral(api_key=MISTRAL_API_KEY) if MISTRAL_API_KEY else None
 
-# Load ONLY the conversation examples from templatechat.md (stop before feature spec sections)
-_EXAMPLES_PATH = os.path.join(os.path.dirname(__file__), "..", "templatechat.md")
+# Load conversation examples from kira/kira_examples.md
+_EXAMPLES_PATH = os.path.join(os.path.dirname(__file__), "kira_examples.md")
 _EXAMPLES_TEXT = ""
 if os.path.exists(_EXAMPLES_PATH):
     with open(_EXAMPLES_PATH, "r") as f:
         raw = f.read()
-    # Only take text up to the feature spec sections (which are not conversation examples)
+    # Only take text up to the feature spec sections if they exist
     for stop_marker in ["== FITUR", "== HANDLING"]:
         idx = raw.find(stop_marker)
         if idx != -1:
@@ -163,6 +163,49 @@ MISTRAL_TOOLS = [
                 "required": ["date_from", "date_to"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_expenses_by_date",
+            "description": "Hapus SEMUA catatan pengeluaran pada tanggal tertentu (YYYY-MM-DD)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date": {
+                        "type": "string",
+                        "description": "Tanggal target (contoh: 2026-04-05)"
+                    }
+                },
+                "required": ["date"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_multiple_expenses",
+            "description": "Tambahkan BEBERAPA pengeluaran sekaligus jika user menyebutkan list/daftar pengeluaran (dalam satu pesan atau pesan berurutan). Gunakan ini WAJIB jika ada lebih dari 1 item pengeluaran yang perlu dicatat.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "expenses": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "amount": {"type": "number", "description": "Jumlah (angka saja, contoh: 15000)"},
+                                "description": {"type": "string", "description": "Nama item/barang"},
+                                "date": {"type": "string", "description": "Tanggal (YYYY-MM-DD)"}
+                            },
+                            "required": ["amount", "description", "date"]
+                        },
+                        "description": "Daftar pengeluaran"
+                    }
+                },
+                "required": ["expenses"]
+            }
+        }
     }
 ]
 
@@ -188,6 +231,10 @@ async def process_tool_call(pool, user_id, tool_call):
         return await tools.delete_expense(pool, args.get("expense_id"))
     elif name == "get_expenses":
         return await tools.get_expenses(pool, user_id, args.get("date_from"), args.get("date_to"))
+    elif name == "delete_expenses_by_date":
+        return await tools.delete_expenses_by_date(pool, user_id, args.get("date"))
+    elif name == "add_multiple_expenses":
+        return await tools.add_multiple_expenses(pool, user_id, args.get("expenses", []))
     
     return '{"error": "unknown tool"}'
 
@@ -300,18 +347,38 @@ CARA JAWAB PERTANYAAN FAKTUAL (Sains, Sejarah, Hewan, dll):
 - Langsung berikan jawabannya saat itu juga. Kalau tidak tahu, tebak ngasal atau jujur aja.
 
 CARA BICARA:
-- Singkat, 1–2 kalimat cukup
+- Singkat, 1–2 kalimat per pesan
 - Jawab sesuai pertanyaan yang ditanya — jangan asal jawab hal lain
 - Gunakan gaya bahasa sesuai MOOD di atas (yang netral lebih flat, yang senang lebih ekspresif)
+- ATURAN JUMLAH PESAN:
+  * Jika mood MINUS (score < 0): Sangat jarang kirim lebih dari 1 pesan. Jawab singkat, padat, dingin.
+  * Jika mood NETRAL / PLUS (score >= 0): Boleh kirim beberapa pesan, pisahkan secara natural. Misal sepotong pendek tiap pesan, terasa mengalir seperti chat manusia.
 
 GAYA BICARA (contoh untuk referensi gaya, bukan untuk dicopy):
 {_EXAMPLES_TEXT}
 
+ATURAN KHUSUS PENGELUARAN (PENTING!):
+- DILARANG KERAS memanggil tool pengeluaran jika user tidak memintanya secara eksplisit.
+- Jika user menyebut pengeluaran (misal: "beli bakso 10rb" atau "udah 5rb, minum 5rb, makan bakso 10rb"):
+  * Jika ada LEBIH DARI SATU item, WAJIB pakai `add_multiple_expenses` dengan semua item sekaligus.
+  * Jika hanya 1 item, boleh pakai `add_expense`.
+  * HARUS mengenali pola list seperti: "- item 10rb", "• item 10rb", nomor "1. item 10rb", baris per baris, atau comma-separated.
+- Jika user minta detail pengeluaran, kamu WAJIB memanggil tool. Balas 3 pesan: Pembuka, Daftar+Total, Opini.
+- WAJIB tambahkan `"is_expense_report": true` HANYA untuk laporan detail.
+- Gunakan format "rb" (ribu). Contoh: 25000 jadi 25 rb.
+- Jika tidak ada pengeluaran saat diminta laporan, jawab dengan gaya bicaramu.
+
+PANDUAN TANGGAL & WAKTU (KRITIS!):
+1. Jika user nanya "hari ini", gunakan tanggal ({current_time.split()[0]}).
+2. Jika user nanya "kemarin", gunakan tanggal ({current_time.split()[0]} dikurangi 1 hari).
+3. Jika user menyebut hari (Senin, Selasa, dsb), carilah hari tersebut yang PALING DEKAT di MASA LALU (sebelum hari ini).
+4. Jangan pernah menampilkan pengeluaran di luar rentang tanggal yang diminta user.
+5. Jika user menyuruh "hapus semua pengeluaran hari ini", kamu WAJIB memanggil `delete_expenses_by_date`. DILARANG KERAS hanya menjawab sudah dihapus tanpa memanggil tool.
+
 FORMAT WAJIB — BALAS HANYA JSON:
-{{"messages": ["balasan kira ke user yang ngajak ngobrol"]}}
- ATAU JIKA USER MINTA TOLONG CHAT ORANG LAIN:
-{{"messages": ["bilang ke user kalau udah di chat/ditolak"], "send_to_username": "username_target_tanpa_@", "send_message": "pesan natural ke target tersebut"}}
-Boleh 1–3 pesan pendek di `messages`. Jangan ada teks di luar JSON."""
+{{"messages": ["balasan kira ke user"]}} 
+(Gunakan {{"is_expense_report": true}} hanya untuk laporan detail)
+Jangan ada teks di luar JSON. Khusus laporan pengeluaran, isi `messages` boleh lebih dari 3."""
 
     if group_context:
         prompt += "\n\n=== Percakapan grup terkini ===\n"
