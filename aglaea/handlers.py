@@ -70,9 +70,25 @@ async def handle_aglaea_message(message: types.Message, pool, bot_username: str 
 
     prompt = generate_system_prompt(first_name, new_score, last_reason, tone_desc, group_context)
 
-    await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+    # Continuous typing indicator loop
+    async def typing_loop():
+        try:
+            while True:
+                await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+                await asyncio.sleep(4)
+        except asyncio.CancelledError:
+            pass
 
-    raw = await ask_ai(prompt, text_for_ai, chat_history=history, pool=pool, user_id=user_id)
+    typing_task = asyncio.create_task(typing_loop())
+    
+    try:
+        raw = await ask_ai(prompt, text_for_ai, chat_history=history, pool=pool, user_id=user_id, message=message)
+    finally:
+        typing_task.cancel()
+        try:
+            await typing_task
+        except asyncio.CancelledError:
+            pass
 
     is_expense_report = False
     try:

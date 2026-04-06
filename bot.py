@@ -517,7 +517,7 @@ async def handle_mentions(message: types.Message):
             
         async def _delayed_aglaea():
             try:
-                await asyncio.sleep(4) # Tunggu 4 detik
+                await asyncio.sleep(1) # Tunggu cuma 1 detik agar responsif
                 await handle_aglaea_message(message, pool)
             except asyncio.CancelledError:
                 # Task dibatalkan karena ada pesan baru, abaikan
@@ -574,7 +574,7 @@ async def handle_mentions(message: types.Message):
         
     async def _delayed_aglaea_group():
         try:
-            await asyncio.sleep(7)
+            await asyncio.sleep(2) # Group debounce dikurangi juga
             await handle_aglaea_message(message, pool, bot_username=bot_username)
         except asyncio.CancelledError:
             pass

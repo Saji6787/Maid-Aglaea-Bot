@@ -12,8 +12,8 @@ _EXAMPLES_TEXT = ""
 if os.path.exists(_EXAMPLES_PATH):
     with open(_EXAMPLES_PATH, "r") as f:
         raw = f.read()
-    # Only take text up to the feature spec sections if they exist
-    for stop_marker in ["== FITUR", "== HANDLING"]:
+    # Only take text up to the tech spec sections if they exist
+    for stop_marker in ["== HANDLING MEDIA"]:
         idx = raw.find(stop_marker)
         if idx != -1:
             raw = raw[:idx]
@@ -267,11 +267,25 @@ MISTRAL_TOOLS = [
                 "required": ["task_id"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "post_delayed_recommendation",
+            "description": "Kirim rekomendasi akhir setelah memberitahu user untuk menunggu. Gunakan ini HANYA saat semua kriteria sudah terbantu dan user siap menerima hasil.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "payload": {"type": "string", "description": "Konten rekomendasi lengkap dalam format HTML. Jangan terlalu panjang, fokus pada kualitas."}
+                },
+                "required": ["payload"]
+            }
+        }
     }
 ]
 
 
-async def process_tool_call(pool, user_id, tool_call):
+async def process_tool_call(pool, user_id, tool_call, message=None):
     name = tool_call.function.name
     try:
         args = json.loads(tool_call.function.arguments)
@@ -304,11 +318,29 @@ async def process_tool_call(pool, user_id, tool_call):
         return await tools.list_tasks(pool, user_id)
     elif name == "complete_task":
         return await tools.complete_task(pool, args.get("task_id"))
+    elif name == "post_delayed_recommendation" and message:
+        payload = args.get("payload", "")
+        # Kirim pesan tunggu segera ke user
+        wait_msg = "Baik, saya akan susun rekomendasinya. Mohon tunggu sebentar ya..."
+        await message.answer(wait_msg)
+        
+        async def delayed_send(bot, chat_id, text):
+            await asyncio.sleep(8)
+            await bot.send_chat_action(chat_id=chat_id, action="typing")
+            await asyncio.sleep(2)
+            await bot.send_message(chat_id=chat_id, text=text)
+            # Log to DB after delayed send
+            if pool:
+                from aglaea.db import log_conversation
+                await log_conversation(pool, user_id, "assistant", text)
+
+        asyncio.create_task(delayed_send(message.bot, message.chat.id, payload))
+        return json.dumps({"status": "success", "message": "Pesan tunggu sudah dikirim, user sedang menanti."})
     
     return '{"error": "unknown tool"}'
 
 
-async def ask_ai(system_prompt: str, message: str, chat_history: list = None, pool=None, user_id: int=None) -> str:
+async def ask_ai(system_prompt: str, message_text: str, chat_history: list = None, pool=None, user_id: int=None, message=None) -> str:
     if mistral_client:
         try:
             messages = [{"role": "system", "content": system_prompt}]
@@ -322,13 +354,15 @@ async def ask_ai(system_prompt: str, message: str, chat_history: list = None, po
                     })
             
             # Finally add current message
-            messages.append({"role": "user", "content": message})
+            messages.append({"role": "user", "content": message_text})
 
             response = await mistral_client.chat.complete_async(
                 model="mistral-large-latest",
                 messages=messages,
                 tools=MISTRAL_TOOLS,
-                tool_choice="auto"
+                tool_choice="auto",
+                temperature=0.2, # Slightly higher for better flow
+                timeout_ms=120000 # 120 seconds
             )
 
             response_msg = response.choices[0].message
@@ -349,21 +383,23 @@ async def ask_ai(system_prompt: str, message: str, chat_history: list = None, po
                         } for t in response_msg.tool_calls
                     ]
                 })
-
-                for tcall in response_msg.tool_calls:
-                    result_json_str = await process_tool_call(pool, user_id, tcall)
+                
+                # Process all tool calls
+                for tool_call in response_msg.tool_calls:
+                    result = await process_tool_call(pool, user_id, tool_call, message=message)
                     messages.append({
                         "role": "tool",
-                        "name": tcall.function.name,
-                        "content": result_json_str,
-                        "tool_call_id": tcall.id
+                        "content": result,
+                        "tool_call_id": tool_call.id
                     })
 
-                # Call Mistral again to get the final JSON formatted response
+                # Call Mistral again after tools
                 final_response = await mistral_client.chat.complete_async(
                     model="mistral-large-latest",
                     messages=messages,
-                    response_format={"type": "json_object"}
+                    response_format={"type": "json_object"},
+                    temperature=0.2,
+                    timeout_ms=120000
                 )
                 content = final_response.choices[0].message.content
             else:
@@ -375,10 +411,30 @@ async def ask_ai(system_prompt: str, message: str, chat_history: list = None, po
             # Cleanup markdown if AI returned it (e.g. ```json ... ```)
             clean_content = content.strip()
             if clean_content.startswith("```"):
-                # Remove triple backticks and optional language label
                 lines = clean_content.split("\n")
                 if len(lines) > 2:
                     clean_content = "\n".join(lines[1:-1]).strip()
+            
+            # FORCIBLY REMOVE '*' AND '#' SYMBOLS (User Request)
+            import re
+            # Remove all '*' and '#' from the text body (inside JSON strings)
+            # We'll first try to parse JSON to be safe, then clean the strings inside.
+            try:
+                data = json.loads(clean_content)
+                if "messages" in data and isinstance(data["messages"], list):
+                    new_messages = []
+                    for msg in data["messages"]:
+                        if isinstance(msg, str):
+                            # Remove '*' and '#' characters
+                            cleaned_msg = re.sub(r'[*#]', '', msg)
+                            new_messages.append(cleaned_msg)
+                        else:
+                            new_messages.append(msg)
+                    data["messages"] = new_messages
+                    clean_content = json.dumps(data)
+            except:
+                # Fallback: simple string replacement if JSON parsing fails
+                clean_content = re.sub(r'[*#]', '', clean_content)
             
             # Final check: is it valid JSON?
             try:
@@ -447,8 +503,8 @@ CARA JAWAB PERTANYAAN FAKTUAL:
 FORMATTING RULES (WAJIB):
 - Gunakan tag HTML untuk formatting: <b>Tebal</b>, <i>Miring</i>, <code>Kode</code>.
 - JANGAN gunakan Markdown seperti ###, **, atau ` (backtick tunggal).
-- Gunakan bullet point yang elegan seperti "•" atau "▫️".
-- Gunakan garis pemisah tipis jika diperlukan: "—————".
+- KHUSUS LAPORAN: Gunakan bullet point "•" atau "▫️".
+- KHUSUS REKOMENDASI: LARANG KERAS gunakan bullet point atau list.
 - Pastikan tampilan pesan terlihat bersih, profesional, dan mudah dibaca (high readability).
 
 ATURAN JUMLAH PESAN:
@@ -474,10 +530,33 @@ PANDUAN TUGAS & CATATAN (WAJIB):
 - Prioritaskan waktu pagi (08:00 atau 09:00) jika user hanya menyebut "pagi".
 - Aglaea harus menyetujui permintaan tugas dengan elegan dan sopan.
 
+PROTOKOL REKOMENDASI (WAJIB):
+1. Jika user meminta rekomendasi (film, anime, buku, dll), Aglaea DILARANG KERAS memberikan opsi umum atau daftar pertanyaan panjang.
+2. Aglaea HARUS merespons secara natural seperti diskusi ("Wah, anime ya? Boleh tahu genre yang lagi ingin ditonton?").
+3. Aglaea HANYA BOLEH menanyakan SATU hal per pesan (satu bubble).
+4. Aglaea harus terdengar seperti asisten pribadi elit yang sedang mengobrol, bukan kuesioner.
+5. Gunakan tool `post_delayed_recommendation` HANYA saat data sudah benar-benar spesifik dan user siap menunggu.
+6. Beritahu user untuk menunggu sejenak dengan kalimat yang santai namun tetap elegan.
+
+PERSONALITY & FORMATTING KETAT:
+- Aglaea adalah "Asisten Elit": Ramah, cerdas, elegan, tapi tidak kaku seperti robot.
+- DILARANG KERAS menggunakan simbol kotor seperti *, #, atau - (bullet points).
+- DILARANG menggunakan gaya asisten standar ("Berikut beberapa opsi...", dsb). Balaslah dengan kalimat mengalir.
+- Tebalkan teks menggunakan tag HTML <b>teks</b> jika benar-benar perlu. Jangan berlebihan.
+- Pastikan semua balasan adalah HTML valid dan terlihat bersih di chat Telegram.
+
 FORMAT WAJIB — BALAS HANYA JSON:
 {{"messages": ["balasan aglaea ke user"]}} 
 Jangan ada teks di luar JSON. Gunakan tag HTML di dalam string JSON jika perlu (misal: "<b>Halo</b>").
-Khusus laporan pengeluaran, isi `messages` HARUS berisi 1 string saja (gabungkan semua detail ke dalamnya)."""
+Khusus laporan pengeluaran, isi `messages` HARUS berisi 1 string saja (gabungkan semua detail ke dalamnya).
+
+CRITICAL FINAL INSTRUCTIONS (PENTING):
+- DILARANG bertanya lebih dari 2 kali (2 giliran). Jika sudah bertanya 2 hal, giliran selanjutnya HARUS memberikan rekomendasi.
+- WAJIB menggunakan tool `post_delayed_recommendation` untuk memberikan hasil rekomendasi akhir. JANGAN tulis list rekomendasi langsung di chat.
+- Hasil rekomendasi dalam tool HARUS singkat: MAKSIMAL 5 item, setiap item hanya berisi Nama dan 1 kalimat deskripsi sederhana.
+- DILARANG menggunakan karakter asterisk (*) atau hash (#).
+- DILARANG menggunakan bullet point (•, -, *) atau angka saat bertanya. Sajikan pilihan secara narasi.
+- Aglaea bukan asisten bantuan standar, dia adalah asisten pribadi yang sangat elegan, singkat, dan minimalis."""
 
     if group_context:
         prompt += "\n\n=== Percakapan grup terkini ===\n"
