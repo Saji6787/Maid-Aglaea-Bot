@@ -221,6 +221,52 @@ MISTRAL_TOOLS = [
                 "required": ["year", "month"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_task",
+            "description": "Tambah tugas/catatan baru dengan deadline opsional dan beberapa waktu pengingat.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "description": "Isi tugas/catatan"},
+                    "deadline_at": {"type": "string", "description": "Waktu deadline (YYYY-MM-DD HH:MM:SS), opsional"},
+                    "reminders": {
+                        "type": "array",
+                        "items": {"type": "string", "description": "Waktu pengingat (YYYY-MM-DD HH:MM:SS)"},
+                        "description": "Daftar waktu untuk mengingatkan user"
+                    }
+                },
+                "required": ["content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_tasks",
+            "description": "Lihat daftar tugas yang belum selesai.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "complete_task",
+            "description": "Selesaikan dan hapus tugas berdasarkan ID.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "integer", "description": "ID tugas yang ingin diselesaikan"}
+                },
+                "required": ["task_id"]
+            }
+        }
     }
 ]
 
@@ -252,6 +298,12 @@ async def process_tool_call(pool, user_id, tool_call):
         return await tools.add_multiple_expenses(pool, user_id, args.get("expenses", []))
     elif name == "get_monthly_expenses":
         return await tools.get_monthly_expenses(pool, user_id, args.get("year"), args.get("month"))
+    elif name == "add_task":
+        return await tools.add_task(pool, user_id, args.get("content"), args.get("deadline_at"), args.get("reminders", []))
+    elif name == "list_tasks":
+        return await tools.list_tasks(pool, user_id)
+    elif name == "complete_task":
+        return await tools.complete_task(pool, args.get("task_id"))
     
     return '{"error": "unknown tool"}'
 
@@ -282,8 +334,21 @@ async def ask_ai(system_prompt: str, message: str, chat_history: list = None, po
             response_msg = response.choices[0].message
 
             if response_msg.tool_calls and pool and user_id:
-                # Add assistant's message with tool_calls back to the thread
-                messages.append(response_msg)
+                # Convert the assistant message to a dict if it's an object
+                messages.append({
+                    "role": "assistant",
+                    "content": response_msg.content,
+                    "tool_calls": [
+                        {
+                            "id": t.id,
+                            "type": t.type,
+                            "function": {
+                                "name": t.function.name,
+                                "arguments": t.function.arguments
+                            }
+                        } for t in response_msg.tool_calls
+                    ]
+                })
 
                 for tcall in response_msg.tool_calls:
                     result_json_str = await process_tool_call(pool, user_id, tcall)
@@ -328,8 +393,11 @@ async def ask_ai(system_prompt: str, message: str, chat_history: list = None, po
             raise
         except Exception as e:
             import logging
-            logging.error(f"Mistral AI Error: {e}")
-            # Silently return a subtle placeholder instead of technical "error:"
+            import traceback
+            error_msg = f"Mistral AI Error: {e}\n{traceback.format_exc()}"
+            logging.error(error_msg)
+            with open("ai_error.log", "a") as f:
+                f.write(f"\n--- {datetime.datetime.now()} ---\n{error_msg}\n")
             return json.dumps({"messages": ["..."]})
 
     return json.dumps({"messages": ["(AI tidak dikonfigurasi)"]})
@@ -376,6 +444,13 @@ CARA JAWAB PERTANYAAN FAKTUAL:
 - Jawab secara langsung, jelas, dan akurat menggunakan pengetahuanmu.
 - Jangan menyuruh user menunggu atau mencari sendiri jika kamu bisa menjawabnya.
 
+FORMATTING RULES (WAJIB):
+- Gunakan tag HTML untuk formatting: <b>Tebal</b>, <i>Miring</i>, <code>Kode</code>.
+- JANGAN gunakan Markdown seperti ###, **, atau ` (backtick tunggal).
+- Gunakan bullet point yang elegan seperti "•" atau "▫️".
+- Gunakan garis pemisah tipis jika diperlukan: "—————".
+- Pastikan tampilan pesan terlihat bersih, profesional, dan mudah dibaca (high readability).
+
 ATURAN JUMLAH PESAN:
 - Berikan respons yang efisien. Biasanya 1-2 kalimat per pesan sudah cukup.
 - Jika mood NETRAL / PLUS, boleh mengirim beberapa pesan terpisah untuk menjaga alur percakapan yang natural.
@@ -384,17 +459,25 @@ GAYA BICARA (contoh untuk referensi gaya, bukan untuk dicopy):
 {_EXAMPLES_TEXT}
 
 ATURAN KHUSUS PENGELUARAN (PENTING!):
-- Gunakan tool pengeluaran hanya jika diminta secara eksplisit.
 - Gunakan format "rb" (ribu) untuk menyebutkan nilai uang.
 - Jika ada lebih dari satu item, gunakan `add_multiple_expenses`.
+- KHUSUS LAPORAN/DETAIL PENGELUARAN: Gabungkan semua informasi (konfirmasi, list, total) ke dalam SATU bubble pesan saja (1 string di dalam list `messages`). Jangan dipisah-pisah.
 
 PANDUAN TANGGAL & WAKTU:
 1. Hari ini: {current_time.split()[0]}.
 2. Gunakan logika tanggal yang akurat untuk "kemarin" atau penyebutan hari.
 
+PANDUAN TUGAS & CATATAN (WAJIB):
+- Jika user menyebut tugas dengan deadline, hitung waktu pengingat otomatis jika tidak diminta spesifik (misal: 1 hari sebelum).
+- Jika user meminta pengingat spesifik (misal: "Sabtu pagi jam 9"), buatkan list pengingat di `add_task`.
+- Jika user meminta pengingat berulang (misal: "jam 9, 12, 3, 6"), buatkan beberapa timestamp di dalam array `reminders`.
+- Prioritaskan waktu pagi (08:00 atau 09:00) jika user hanya menyebut "pagi".
+- Aglaea harus menyetujui permintaan tugas dengan elegan dan sopan.
+
 FORMAT WAJIB — BALAS HANYA JSON:
 {{"messages": ["balasan aglaea ke user"]}} 
-Jangan ada teks di luar JSON. Khusus laporan pengeluaran, isi `messages` boleh lebih dari 3."""
+Jangan ada teks di luar JSON. Gunakan tag HTML di dalam string JSON jika perlu (misal: "<b>Halo</b>").
+Khusus laporan pengeluaran, isi `messages` HARUS berisi 1 string saja (gabungkan semua detail ke dalamnya)."""
 
     if group_context:
         prompt += "\n\n=== Percakapan grup terkini ===\n"

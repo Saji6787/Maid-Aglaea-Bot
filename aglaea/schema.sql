@@ -44,11 +44,13 @@ CREATE TABLE IF NOT EXISTS group_conversations (
 CREATE TABLE IF NOT EXISTS reminders_aglaea (
     id INT AUTO_INCREMENT PRIMARY KEY,
     user_id BIGINT NOT NULL,
+    task_id INT DEFAULT NULL,
     remind_at DATETIME NOT NULL,
     note TEXT NOT NULL,
     is_sent TINYINT(1) DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS expenses (
@@ -57,6 +59,16 @@ CREATE TABLE IF NOT EXISTS expenses (
     amount DECIMAL(12,2) NOT NULL,
     description VARCHAR(255),
     date DATE NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    content TEXT NOT NULL,
+    deadline_at DATETIME DEFAULT NULL,
+    status ENUM('pending', 'completed') DEFAULT 'pending',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );

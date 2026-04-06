@@ -193,3 +193,81 @@ async def get_monthly_expenses(pool, user_id: int, year: int, month: int) -> str
         })
     except Exception as e:
         return json.dumps({"error": str(e)})
+
+async def add_task(pool, user_id: int, content: str, deadline_at: str = None, reminders: list = []) -> str:
+    """
+    Tambah tugas baru.
+    reminders = ["2026-04-05 14:00:00", ...]
+    """
+    try:
+        deadline_dt = datetime.strptime(deadline_at, "%Y-%m-%d %H:%M:%S") if deadline_at else None
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                # 1. Insert task
+                await cur.execute(
+                    "INSERT INTO tasks (user_id, content, deadline_at) VALUES (%s, %s, %s)",
+                    (user_id, content, deadline_dt)
+                )
+                task_id = cur.lastrowid
+                
+                # 2. Insert associated reminders
+                for r_time in reminders:
+                    try:
+                        r_dt = datetime.strptime(r_time, "%Y-%m-%d %H:%M:%S")
+                        await cur.execute(
+                            "INSERT INTO reminders_aglaea (user_id, task_id, remind_at, note) VALUES (%s, %s, %s, %s)",
+                            (user_id, task_id, r_dt, f"🔔 Pengingat Tugas: {content}")
+                        )
+                    except Exception as re:
+                        logging.warning(f"Failed to add reminder for task {task_id}: {re}")
+                
+        return json.dumps({
+            "status": "success", 
+            "message": f"Tugas '{content}' berhasil disimpan" + (f" dengan deadline {deadline_at}" if deadline_at else "") + f". Terjadwal {len(reminders)} pengingat.",
+            "task_id": task_id
+        })
+    except Exception as e:
+        logging.error(f"add_task error: {e}")
+        return json.dumps({"error": str(e)})
+
+async def list_tasks(pool, user_id: int) -> str:
+    try:
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(
+                    "SELECT id, content, deadline_at FROM tasks WHERE user_id = %s AND status = 'pending' ORDER BY created_at ASC",
+                    (user_id,)
+                )
+                rows = await cur.fetchall()
+                if not rows:
+                    return json.dumps({"tasks": []})
+                
+                tasks = []
+                for row in rows:
+                    tasks.append({
+                        "id": row['id'],
+                        "content": row['content'],
+                        "deadline": row['deadline_at'].strftime("%Y-%m-%d %H:%M:%S") if row['deadline_at'] else None
+                    })
+                return json.dumps({"tasks": tasks})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+async def complete_task(pool, task_id: int) -> str:
+    """Selesaikan tugas (hapus dari database beserta pengingatnya)."""
+    try:
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                # Get content for message
+                await cur.execute("SELECT content FROM tasks WHERE id = %s", (task_id,))
+                row = await cur.fetchone()
+                if not row:
+                    return json.dumps({"status": "error", "message": "Tugas tidak ditemukan"})
+                
+                content = row[0]
+                # Delete task (reminders will be deleted via CASCADE)
+                await cur.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
+                
+                return json.dumps({"status": "success", "message": f"Tugas '{content}' telah diselesaikan dan dihapus."})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
