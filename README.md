@@ -1,10 +1,10 @@
-# Kiraa PotBot 🤖
+# [Aglaea Maid Assistant Bot]
 
-Bot Telegram multi-fungsi yang ditenagai oleh AI (Gemini & Mistral), fitur pencatatan pengeluaran, pengingat otomatis, dan permainan sambung kata.
+Bot Telegram multi-fungsi yang ditenagai oleh AI (Gemini & Mistral), fitur pencatatan pengeluaran, pengingat otomatis, dan permainan berbasis teks.
 
-## Fitur Utama
+## Fitur Utama:
 
-- 🧠 **Aglaea AI**: Ngobrol dengan asisten elit menggunakan model Gemini atau Mistral.
+- 🧠 **Aglaea AI**: Ngobrol dengan asisten menggunakan model Gemini atau Mistral.
 - 💸 **Catat Pengeluaran**: Kelola keuangan harian dengan mudah lewat chat.
 - ⏰ **AI Reminder**: Seting pengingat hanya dengan bahasa natural (contoh: "Agy, ingetin besok jam 8 pagi buat kuliah").
 - 🎮 **Game Sambung Kata**: Permainan interaktif dengan narasi unik dari AI.
