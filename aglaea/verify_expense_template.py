@@ -6,15 +6,15 @@ def mock_get_tone_description(score):
 
 def _mood_label(score: int) -> str:
     if score >= 30:
-        return "SANGAT SENANG — Kira hangat, ekspresif, boleh pakai 1 emoji, sesekali bercanda"
+        return "ANGGUN & APRESIATIF — Aglaea sangat sopan, cerdas, dan menunjukkan kebaikan hati yang berkelas."
     elif score >= 10:
-        return "SENANG — Kira agak ramah, masih cuek tapi mau diajak ngobrol lebih"
+        return "SOPAN — Aglaea profesional dan menghargai, memberikan respons yang terukur."
     elif score >= -9:
-        return "NETRAL — Kira cuek biasa, singkat, tidak hangat tapi tidak dingin"
+        return "NETRAL — Aglaea tenang, logis, dan efisien dalam berkomunikasi."
     elif score >= -29:
-        return "KESAL — Kira singkat dan ketus, jawab seadanya, tidak mau basa-basi"
+        return "DINGIN — Aglaea menjaga jarak, bicara seperlunya secara sangat profesional."
     else:
-        return "MARAH — Kira hampir tidak mau jawab, satu kata, sangat dingin"
+        return "SANGAT DINGIN — Aglaea kaku, sangat singkat, dan memberikan batasan yang tegas."
 
 def generate_system_prompt(username: str, score: int, last_reason: str, tone_desc: str, chat_history: list, group_context: list = None) -> str:
     mood_instruction = _mood_label(score)

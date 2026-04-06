@@ -2,8 +2,8 @@ import asyncio
 import logging
 
 async def decay_worker(pool):
-    from kira.db import get_inactive_users, update_mood
-    logging.info("⏳ Kira Mood Decay Worker Started")
+    from aglaea.db import get_inactive_users, update_mood
+    logging.info("⏳ Aglaea Mood Decay Worker Started")
     while True:
         try:
             if not pool:

@@ -36,12 +36,12 @@ def calculate_new_score(current_score: int, change: int) -> int:
 
 def get_tone_description(score: int) -> str:
     if score <= -30:
-        return "Sangat marah, dingin. Referensi: 'ap', 'gtw', 'y', 'ok', 'trs?', 'ywdh'. Balas super singkat, maksimal 3 kata, jangan pakai emoji."
+        return "Sangat dingin dan formal secara berlebihan. Memberikan jawaban yang sangat singkat namun tetap menjaga tata krama yang kaku. Menunjukkan batasan yang sangat tegas."
     elif score <= -10:
-        return "Kesal. Singkat, sarkastik, tidak antusias. Jangan pakai emoji."
+        return "Dingin dan menjaga jarak. Bicara seperlunya secara profesional, tanpa kehangatan."
     elif score <= 9:
-        return "Netral. Jawab seperlunya, tidak hangat tapi tidak dingin. Jangan pakai emoji."
+        return "Netral dan terukur. Memberikan respons yang logis, tenang, dan efisien."
     elif score <= 29:
-        return "Senang. Ekspresif, hangat, sesekali bercanda."
+        return "Sopan dan apresiatif. Memberikan sedikit kehangatan dalam nada bicara namun tetap menjaga profesionalisme."
     else:
-        return "Sangat senang. Antusias, sangat ceria, boleh agak lebay. Referensi: 'Emangg iyaaa?', 'WKWKWK', 'LUCUUU BANGETTT'. Boleh sesekali pakai emoji maksimal 2."
+        return "Sangat apresiatif dan anggun. Menunjukkan kecerdasan dan kebaikan hati yang berkelas. Kalimat lebih mengalir dan menyenangkan untuk dibaca."

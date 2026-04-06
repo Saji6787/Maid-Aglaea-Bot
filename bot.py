@@ -91,7 +91,7 @@ async def close_db_pool():
 # ================= GAME LOBBY STATE =================
 game_lobbies = {}  # chat_id -> {"players": [user_id], "game_type": "wordchain"}
 active_games = {}  # chat_id -> GameSession
-pending_kira_tasks = {}  # (chat_id, user_id) -> asyncio.Task
+pending_aglaea_tasks = {}  # (chat_id, user_id) -> asyncio.Task
 
 # ================= BACKGROUND WORKER =================
 async def reminder_worker(bot: Bot):
@@ -109,7 +109,7 @@ async def reminder_worker(bot: Bot):
             async with pool.acquire() as conn:
                 async with conn.cursor(aiomysql.DictCursor) as cur:
                     await cur.execute(
-                        "SELECT id, user_id, note FROM reminders_kira WHERE is_sent = 0 AND remind_at <= %s",
+                        "SELECT id, user_id, note FROM reminders_aglaea WHERE is_sent = 0 AND remind_at <= %s",
                         (current_date_str,)
                     )
                     rows = await cur.fetchall()
@@ -121,19 +121,19 @@ async def reminder_worker(bot: Bot):
                                 text=f"eh {row['note']}\njangan sampe lupa"
                             )
                             # Langsung hapus reminder setelah berhasil dikirim
-                            await cur.execute("DELETE FROM reminders_kira WHERE id = %s", (row['id'],))
+                            await cur.execute("DELETE FROM reminders_aglaea WHERE id = %s", (row['id'],))
                         except Exception as e:
                             if "Forbidden" in str(e):
                                 logging.warning(f"⚠️ User {row['user_id']} belum PC bot/memblokir. Reminder ID {row['id']} dibatalkan.")
-                                await cur.execute("UPDATE reminders_kira SET is_sent = 2 WHERE id = %s", (row['id'],)) # 2 = Failed/Forbidden
+                                await cur.execute("UPDATE reminders_aglaea SET is_sent = 2 WHERE id = %s", (row['id'],)) # 2 = Failed/Forbidden
                             else:
                                 logging.error(f"❌ Error kirim reminder ke {row['user_id']}: {e}")
                     
                     # Cleanup reminder yang gagal dikirim (Forbidden) setelah 1 hari
-                    await cur.execute("DELETE FROM reminders_kira WHERE is_sent = 2 AND created_at < NOW() - INTERVAL 1 DAY")
+                    await cur.execute("DELETE FROM reminders_aglaea WHERE is_sent = 2 AND created_at < NOW() - INTERVAL 1 DAY")
         except Exception as e:
             if "(1146," in str(e): # Table doesn't exist
-                logging.warning("⚠️ Tabel reminders_kira belum dibuat. Worker standby...")
+                logging.warning("⚠️ Tabel reminders_aglaea belum dibuat. Worker standby...")
                 await asyncio.sleep(300) # Sleep longer if table missing
             else:
                 logging.error(f"❌ Worker error: {e}")
@@ -373,19 +373,19 @@ async def cmd_features(message: types.Message):
     features_text = (
         f"🤖 <b>Daftar Fitur Lengkap Bot @{username}</b>\n\n"
         
-        f"🧠 <b>1. AI & Chat (Kira)</b>\n"
-        f"• Ngobrol: Langsung chat atau reply pesan Kira\n"
+        f"🧠 <b>1. AI & Chat (Aglaea)</b>\n"
+        f"• Ngobrol: Langsung chat atau reply pesan Aglaea\n"
         f"• Mention: <code>@{username} [prompt]</code> (Grup)\n"
         f"• <code>/models</code> — Pilih model AI\n"
         f"• 🔄 Auto-Detect — Deteksi model otomatis\n\n"
         
-        f"⏰ <b>2. AI Reminder (Kira Tools)</b>\n"
+        f"⏰ <b>2. AI Reminder (Aglaea Tools)</b>\n"
         f"• Cara pakai: <i>'kir nanti ingetin jam 3 buat kuliah'</i>\n"
         f"• Daftar: <i>'kir jadwal gue apa aja'</i>\n"
         f"• Hapus: <i>'batalin reminder yang mandi tadi'</i>\n"
         f"• ⚡ AI otomatis konversi waktu relatif (besok, nanti)\n\n"
 
-        f"💸 <b>3. Catat Pengeluaran (Kira Tools)</b>\n"
+        f"💸 <b>3. Catat Pengeluaran (Aglaea Tools)</b>\n"
         f"• Cara pakai: <i>'kir tadi beli nasi uduk 15rb'</i>\n"
         f"• Riwayat: <code>/riwayat</code> atau <i>'kemarin jajan apa aja'</i>\n"
         f"• Edit/Hapus: <i>'hapus pengeluaran yang tadi'</i>\n\n"
@@ -460,8 +460,27 @@ async def handle_close_models(callback: types.CallbackQuery):
         )
     await callback.answer()
 
+@dp.callback_query(F.data.startswith("exp:"))
+async def handle_expense_pagination(callback: types.CallbackQuery):
+    try:
+        parts = callback.data.split(":")
+        page = int(parts[1])
+        year = int(parts[2])
+        month = int(parts[3])
+        
+        from aglaea.tools import get_monthly_expenses
+        from aglaea.handlers import send_monthly_expense_page
+        
+        user_id = callback.from_user.id
+        res_json = await get_monthly_expenses(pool, user_id, year, month)
+        monthly_data = json.loads(res_json)
+        
+        await send_monthly_expense_page(callback, monthly_data, page=page)
+    except Exception as e:
+        await callback.answer(f"Error: {str(e)}", show_alert=True)
+
 # ================= MENTION & GAME MESSAGE HANDLER =================
-from kira.handlers import handle_kira_message
+from aglaea.handlers import handle_aglaea_message
 
 @dp.message(~F.text.startswith('/'))
 async def handle_mentions(message: types.Message):
@@ -472,8 +491,16 @@ async def handle_mentions(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
 
-    # Private chat → Kira handles everything
+    # Private chat → Aglaea handles everything
     if message.chat.type == "private":
+        # Log immediately so history is accurate even if timer is cancelled
+        from aglaea.db import log_conversation
+        if pool:
+            try:
+                await log_conversation(pool, user_id, "user", text)
+            except Exception:
+                pass
+
         # But first, check if it's a game move
         if chat_id in active_games and user_id in active_games[chat_id].players:
             if " " not in text:
@@ -482,22 +509,22 @@ async def handle_mentions(message: types.Message):
         
         # Debounce/Anti-Spam logic
         user_key = (chat_id, user_id)
-        if user_key in pending_kira_tasks:
-            pending_kira_tasks[user_key].cancel()
+        if user_key in pending_aglaea_tasks:
+            pending_aglaea_tasks[user_key].cancel()
             
-        async def _delayed_kira():
+        async def _delayed_aglaea():
             try:
                 await asyncio.sleep(4) # Tunggu 4 detik
-                await handle_kira_message(message, pool)
+                await handle_aglaea_message(message, pool)
             except asyncio.CancelledError:
                 # Task dibatalkan karena ada pesan baru, abaikan
                 pass
             finally:
-                if pending_kira_tasks.get(user_key) == task:
-                    del pending_kira_tasks[user_key]
+                if pending_aglaea_tasks.get(user_key) == task:
+                    del pending_aglaea_tasks[user_key]
         
-        task = asyncio.create_task(_delayed_kira())
-        pending_kira_tasks[user_key] = task
+        task = asyncio.create_task(_delayed_aglaea())
+        pending_aglaea_tasks[user_key] = task
         return
 
     # Group / supergroup
@@ -512,7 +539,7 @@ async def handle_mentions(message: types.Message):
 
     # Save to group context
     username = message.from_user.username or message.from_user.first_name or "User"
-    from kira.db import save_group_message
+    from aglaea.db import save_group_message
     if pool:
         try:
             await save_group_message(pool, chat_id, user_id, username, text[:500])
@@ -537,23 +564,23 @@ async def handle_mentions(message: types.Message):
     if not (mentioned or is_reply_to_me):
         return
 
-    # Group @mention or reply → Kira handles it with debounce
+    # Group @mention or reply → Aglaea handles it with debounce
     user_key = (chat_id, user_id)
-    if user_key in pending_kira_tasks:
-        pending_kira_tasks[user_key].cancel()
+    if user_key in pending_aglaea_tasks:
+        pending_aglaea_tasks[user_key].cancel()
         
-    async def _delayed_kira_group():
+    async def _delayed_aglaea_group():
         try:
             await asyncio.sleep(7)
-            await handle_kira_message(message, pool, bot_username=bot_username)
+            await handle_aglaea_message(message, pool, bot_username=bot_username)
         except asyncio.CancelledError:
             pass
         finally:
-            if pending_kira_tasks.get(user_key) == task:
-                del pending_kira_tasks[user_key]
+            if pending_aglaea_tasks.get(user_key) == task:
+                del pending_aglaea_tasks[user_key]
                 
-    task = asyncio.create_task(_delayed_kira_group())
-    pending_kira_tasks[user_key] = task
+    task = asyncio.create_task(_delayed_aglaea_group())
+    pending_aglaea_tasks[user_key] = task
     return
 
 
@@ -998,9 +1025,9 @@ async def cb_game_stop(callback: types.CallbackQuery):
             pass
         await callback.answer("Game sudah tidak aktif.")
 
-# ================= KIRA DB =================
-from kira.decay import decay_worker
-from kira.db import setup_db
+# ================= AGLAEA DB =================
+from aglaea.decay import decay_worker
+from aglaea.db import setup_db
 
 # ================= MAIN =================
 async def main():
@@ -1008,13 +1035,13 @@ async def main():
     if pool:
         try:
             await setup_db(pool)
-            logging.info("✅ Kira Database Schema Initialized")
+            logging.info("✅ Aglaea Database Schema Initialized")
         except Exception as e:
-            logging.warning(f"⚠️ Kira DB setup (non-fatal, tabel mungkin sudah ada): {e}")
-    kira_decay_task = None
+            logging.warning(f"⚠️ Aglaea DB setup (non-fatal, tabel mungkin sudah ada): {e}")
+    aglaea_decay_task = None
     reminder_task = None
     if pool:
-        kira_decay_task = asyncio.create_task(decay_worker(pool))
+        aglaea_decay_task = asyncio.create_task(decay_worker(pool))
         reminder_task = asyncio.create_task(reminder_worker(bot))
     
     me = await bot.get_me()
@@ -1027,10 +1054,10 @@ async def main():
     except KeyboardInterrupt:
         logging.info("🛑 Shutdown signal received")
     finally:
-        if kira_decay_task and not kira_decay_task.done():
-            kira_decay_task.cancel()
+        if aglaea_decay_task and not aglaea_decay_task.done():
+            aglaea_decay_task.cancel()
             try:
-                await kira_decay_task
+                await aglaea_decay_task
             except asyncio.CancelledError:
                 pass
         if reminder_task and not reminder_task.done():

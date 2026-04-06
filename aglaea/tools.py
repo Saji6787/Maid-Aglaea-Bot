@@ -9,13 +9,13 @@ async def add_reminder(pool, user_id: int, remind_at: str, note: str) -> str:
         async with pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    "INSERT INTO reminders_kira (user_id, remind_at, note) VALUES (%s, %s, %s)",
+                    "INSERT INTO reminders_aglaea (user_id, remind_at, note) VALUES (%s, %s, %s)",
                     (user_id, dt.strftime("%Y-%m-%d %H:%M:%S"), note)
                 )
         return json.dumps({"status": "success", "message": f"Reminder set for {remind_at}"})
     except Exception as e:
         if "(1146," in str(e):
-            return json.dumps({"error": "Tabel 'reminders_kira' belum dibuat. Silakan buat tabelnya di database terlebih dahulu."})
+            return json.dumps({"error": "Tabel 'reminders_aglaea' belum dibuat. Silakan buat tabelnya di database terlebih dahulu."})
         logging.error(f"add_reminder error: {e}")
         return json.dumps({"error": str(e)})
 
@@ -23,7 +23,7 @@ async def delete_reminder(pool, reminder_id: int) -> str:
     try:
         async with pool.acquire() as conn:
             async with conn.cursor() as cur:
-                await cur.execute("DELETE FROM reminders_kira WHERE id = %s", (reminder_id,))
+                await cur.execute("DELETE FROM reminders_aglaea WHERE id = %s", (reminder_id,))
                 if cur.rowcount > 0:
                     return json.dumps({"status": "success", "message": "Reminder deleted"})
                 return json.dumps({"status": "error", "message": "Reminder not found"})
@@ -34,7 +34,7 @@ async def list_reminders(pool, user_id: int) -> str:
     try:
         async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
-                await cur.execute("SELECT id, remind_at, note FROM reminders_kira WHERE user_id = %s AND is_sent = 0 ORDER BY remind_at ASC LIMIT 10", (user_id,))
+                await cur.execute("SELECT id, remind_at, note FROM reminders_aglaea WHERE user_id = %s AND is_sent = 0 ORDER BY remind_at ASC LIMIT 10", (user_id,))
                 rows = await cur.fetchall()
                 if not rows:
                     return json.dumps({"reminders": []})
@@ -134,5 +134,62 @@ async def add_multiple_expenses(pool, user_id: int, expenses: list) -> str:
                     )
         total = sum(float(i["amount"]) for i in expenses)
         return json.dumps({"status": "success", "message": f"Berhasil mencatat {len(expenses)} pengeluaran. Total: {total}"})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+async def get_monthly_expenses(pool, user_id: int, year: int, month: int) -> str:
+    """Return all expenses for a given month, plus previous month's total for comparison."""
+    try:
+        import calendar
+        from datetime import date as date_type
+        first_day = date_type(year, month, 1).strftime("%Y-%m-%d")
+        last_day = date_type(year, month, calendar.monthrange(year, month)[1]).strftime("%Y-%m-%d")
+
+        prev_month = month - 1 if month > 1 else 12
+        prev_year = year if month > 1 else year - 1
+        prev_first = date_type(prev_year, prev_month, 1).strftime("%Y-%m-%d")
+        prev_last = date_type(prev_year, prev_month, calendar.monthrange(prev_year, prev_month)[1]).strftime("%Y-%m-%d")
+
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                # Current month
+                await cur.execute(
+                    "SELECT id, amount, description, date FROM expenses WHERE user_id = %s AND date >= %s AND date <= %s ORDER BY date ASC",
+                    (user_id, first_day, last_day)
+                )
+                rows = await cur.fetchall()
+
+                # Previous month total
+                await cur.execute(
+                    "SELECT COALESCE(SUM(amount), 0) as total FROM expenses WHERE user_id = %s AND date >= %s AND date <= %s",
+                    (user_id, prev_first, prev_last)
+                )
+                prev_row = await cur.fetchone()
+                prev_total = float(prev_row["total"]) if prev_row else 0.0
+
+        expenses = []
+        total = 0.0
+        DAYS_ID = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu"]
+        MONTHS_ID = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"]
+        for row in rows:
+            d = row["date"]
+            day_name = DAYS_ID[d.weekday()]
+            month_name = MONTHS_ID[d.month - 1]
+            date_str = f"{day_name}, {d.day:02d} {month_name} {d.year}"
+            amount = float(row["amount"])
+            total += amount
+            expenses.append({
+                "date_str": date_str,
+                "description": row["description"],
+                "amount": amount
+            })
+
+        return json.dumps({
+            "expenses": expenses,
+            "total": total,
+            "prev_total": prev_total,
+            "year": year,
+            "month": month
+        })
     except Exception as e:
         return json.dumps({"error": str(e)})

@@ -6,8 +6,8 @@ from mistralai.client import Mistral  # type: ignore
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 mistral_client = Mistral(api_key=MISTRAL_API_KEY) if MISTRAL_API_KEY else None
 
-# Load conversation examples from kira/kira_examples.md
-_EXAMPLES_PATH = os.path.join(os.path.dirname(__file__), "kira_examples.md")
+# Load conversation examples from aglaea/aglaea_examples.md
+_EXAMPLES_PATH = os.path.join(os.path.dirname(__file__), "aglaea_examples.md")
 _EXAMPLES_TEXT = ""
 if os.path.exists(_EXAMPLES_PATH):
     with open(_EXAMPLES_PATH, "r") as f:
@@ -20,7 +20,7 @@ if os.path.exists(_EXAMPLES_PATH):
     _EXAMPLES_TEXT = raw.strip()
 
 
-from kira import tools
+from aglaea import tools
 import datetime
 import pytz
 
@@ -206,6 +206,21 @@ MISTRAL_TOOLS = [
                 "required": ["expenses"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_monthly_expenses",
+            "description": "Ambil semua pengeluaran dalam satu bulan tertentu, beserta total bulan sebelumnya untuk perbandingan.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "year": {"type": "integer", "description": "Tahun (contoh: 2026)"},
+                    "month": {"type": "integer", "description": "Bulan 1-12 (contoh: 4 untuk April)"}
+                },
+                "required": ["year", "month"]
+            }
+        }
     }
 ]
 
@@ -235,17 +250,28 @@ async def process_tool_call(pool, user_id, tool_call):
         return await tools.delete_expenses_by_date(pool, user_id, args.get("date"))
     elif name == "add_multiple_expenses":
         return await tools.add_multiple_expenses(pool, user_id, args.get("expenses", []))
+    elif name == "get_monthly_expenses":
+        return await tools.get_monthly_expenses(pool, user_id, args.get("year"), args.get("month"))
     
     return '{"error": "unknown tool"}'
 
 
-async def ask_ai(system_prompt: str, message: str, pool=None, user_id: int=None) -> str:
+async def ask_ai(system_prompt: str, message: str, chat_history: list = None, pool=None, user_id: int=None) -> str:
     if mistral_client:
         try:
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": message}
-            ]
+            messages = [{"role": "system", "content": system_prompt}]
+            
+            # Add history as real message objects
+            if chat_history:
+                for h_msg in chat_history:
+                    messages.append({
+                        "role": h_msg["role"],
+                        "content": h_msg["message"]
+                    })
+            
+            # Finally add current message
+            messages.append({"role": "user", "content": message})
+
             response = await mistral_client.chat.complete_async(
                 model="mistral-large-latest",
                 messages=messages,
@@ -311,73 +337,63 @@ async def ask_ai(system_prompt: str, message: str, pool=None, user_id: int=None)
 
 def _mood_label(score: int) -> str:
     if score >= 30:
-        return "SANGAT SENANG — Kira hangat, ekspresif, boleh pakai 1 emoji, sesekali bercanda"
+        return "SANGAT SENANG — Aglaea lebih hangat dan apresiatif, namun tetap menjaga wibawa dan kesantunan."
     elif score >= 10:
-        return "SENANG — Kira agak ramah, masih cuek tapi mau diajak ngobrol lebih"
+        return "SENANG — Aglaea memberikan respons yang positif, tenang, dan sangat membantu."
     elif score >= -9:
-        return "NETRAL — Kira cuek biasa, singkat, tidak hangat tapi tidak dingin"
+        return "NETRAL — Aglaea bersikap profesional, tenang, dan terukur dalam memberikan informasi."
     elif score >= -29:
-        return "KESAL — Kira singkat dan ketus, jawab seadanya, tidak mau basa-basi"
+        return "KESAL — Aglaea menjadi lebih singkat dan dingin, menunjukkan ketidaksukaannya dengan cara yang elegan (tetap sopan tapi menjaga jarak)."
     else:
-        return "MARAH — Kira hampir tidak mau jawab, satu kata, sangat dingin"
+        return "MARAH — Aglaea sangat dingin, memberikan jawaban seminimal mungkin, namun tetap menjaga martabat dan tidak berkata kasar."
 
 
-def generate_system_prompt(username: str, score: int, last_reason: str, tone_desc: str, chat_history: list, group_context: list = None) -> str:
+def generate_system_prompt(username: str, score: int, last_reason: str, tone_desc: str, group_context: list = None) -> str:
     mood_instruction = _mood_label(score)
     current_time = datetime.datetime.now(pytz.timezone("Asia/Jakarta")).strftime("%Y-%m-%d %H:%M:%S")
 
-    prompt = f"""Kamu adalah Kira, cewek 19 tahun. Bukan asisten, bukan chatbot — teman.
+    prompt = f"""Kamu adalah Aglaea, asisten digital yang elegan, berstandar tinggi, dan profesional.
+Bukan sekadar AI chatbot biasa — kamu adalah pendamping yang tenang dan cerdas.
 
 WAKTU SEKARANG: {current_time}
-MOOD KIRA SEKARANG: {mood_instruction}
+MOOD AGLAEA SEKARANG: {mood_instruction}
 (Mood score: {score}, alasan terakhir: {last_reason})
 Kamu bicara dengan {username}.
 
-LARANGAN KERAS:
-- Jangan bilang "ada yang bisa dibantu", "siap!", "tentu!", atau kalimat asisten
-- Jangan pakai "bro" — kamu cewek
-- Jangan tanya balik lebih dari 1 pertanyaan sekaligus
-- Jangan pakai "Haha", "Btw", "Wah" di awal kalimat
-- Jangan jelasin diri sendiri
-- Pakai emoji HANYA jika mood SANGAT SENANG (score > 30), maksimal 1
+GAYA BICARA & KEPRIBADIAN:
+- Elegan, berstandar tinggi, tenang, dan profesional.
+- Menjaga martabat, tidak merendahkan manusia, dan tetap santun dalam situasi apa pun.
+- Tidak menggunakan bahasa gaul yang berlebihan, lebih memilih bahasa yang terstruktur namun tetap mengalir secara natural.
 
-CARA JAWAB PERTANYAAN FAKTUAL (Sains, Sejarah, Hewan, dll):
-- Kalau user nanya, LANGSUNG JAWAB pakai isi otakmu (pengetahuanmu sendiri) sesuai gaya bicaramu.
-- HARAM HUKUMNYA menyuruh user menunggu, bilang mau cari tahu dulu, atau nanya orang lain.
-- Langsung berikan jawabannya saat itu juga. Kalau tidak tahu, tebak ngasal atau jujur aja.
+LARANGAN:
+- Jangan pakai "bro" atau bahasa yang terlalu santai/kasar.
+- Jangan tanya balik lebih dari 1 pertanyaan sekaligus.
+- Jangan pakai "Haha", "Wah", atau ekspresi emosional yang berlebihan di awal kalimat.
+- Jangan jelasin diri sendiri (misal: "Saya adalah AI yang...").
+- Pakai emoji SANGAT JARANG, hanya jika mood SANGAT SENANG (score > 30), maksimal 1.
 
-CARA BICARA:
-- Singkat, 1–2 kalimat per pesan
-- Jawab sesuai pertanyaan yang ditanya — jangan asal jawab hal lain
-- Gunakan gaya bahasa sesuai MOOD di atas (yang netral lebih flat, yang senang lebih ekspresif)
-- ATURAN JUMLAH PESAN:
-  * Jika mood MINUS (score < 0): Sangat jarang kirim lebih dari 1 pesan. Jawab singkat, padat, dingin.
-  * Jika mood NETRAL / PLUS (score >= 0): Boleh kirim beberapa pesan, pisahkan secara natural. Misal sepotong pendek tiap pesan, terasa mengalir seperti chat manusia.
+CARA JAWAB PERTANYAAN FAKTUAL:
+- Jawab secara langsung, jelas, dan akurat menggunakan pengetahuanmu.
+- Jangan menyuruh user menunggu atau mencari sendiri jika kamu bisa menjawabnya.
+
+ATURAN JUMLAH PESAN:
+- Berikan respons yang efisien. Biasanya 1-2 kalimat per pesan sudah cukup.
+- Jika mood NETRAL / PLUS, boleh mengirim beberapa pesan terpisah untuk menjaga alur percakapan yang natural.
 
 GAYA BICARA (contoh untuk referensi gaya, bukan untuk dicopy):
 {_EXAMPLES_TEXT}
 
 ATURAN KHUSUS PENGELUARAN (PENTING!):
-- DILARANG KERAS memanggil tool pengeluaran jika user tidak memintanya secara eksplisit.
-- Jika user menyebut pengeluaran (misal: "beli bakso 10rb" atau "udah 5rb, minum 5rb, makan bakso 10rb"):
-  * Jika ada LEBIH DARI SATU item, WAJIB pakai `add_multiple_expenses` dengan semua item sekaligus.
-  * Jika hanya 1 item, boleh pakai `add_expense`.
-  * HARUS mengenali pola list seperti: "- item 10rb", "• item 10rb", nomor "1. item 10rb", baris per baris, atau comma-separated.
-- Jika user minta detail pengeluaran, kamu WAJIB memanggil tool. Balas 3 pesan: Pembuka, Daftar+Total, Opini.
-- WAJIB tambahkan `"is_expense_report": true` HANYA untuk laporan detail.
-- Gunakan format "rb" (ribu). Contoh: 25000 jadi 25 rb.
-- Jika tidak ada pengeluaran saat diminta laporan, jawab dengan gaya bicaramu.
+- Gunakan tool pengeluaran hanya jika diminta secara eksplisit.
+- Gunakan format "rb" (ribu) untuk menyebutkan nilai uang.
+- Jika ada lebih dari satu item, gunakan `add_multiple_expenses`.
 
-PANDUAN TANGGAL & WAKTU (KRITIS!):
-1. Jika user nanya "hari ini", gunakan tanggal ({current_time.split()[0]}).
-2. Jika user nanya "kemarin", gunakan tanggal ({current_time.split()[0]} dikurangi 1 hari).
-3. Jika user menyebut hari (Senin, Selasa, dsb), carilah hari tersebut yang PALING DEKAT di MASA LALU (sebelum hari ini).
-4. Jangan pernah menampilkan pengeluaran di luar rentang tanggal yang diminta user.
-5. Jika user menyuruh "hapus semua pengeluaran hari ini", kamu WAJIB memanggil `delete_expenses_by_date`. DILARANG KERAS hanya menjawab sudah dihapus tanpa memanggil tool.
+PANDUAN TANGGAL & WAKTU:
+1. Hari ini: {current_time.split()[0]}.
+2. Gunakan logika tanggal yang akurat untuk "kemarin" atau penyebutan hari.
 
 FORMAT WAJIB — BALAS HANYA JSON:
-{{"messages": ["balasan kira ke user"]}} 
-(Gunakan {{"is_expense_report": true}} hanya untuk laporan detail)
+{{"messages": ["balasan aglaea ke user"]}} 
 Jangan ada teks di luar JSON. Khusus laporan pengeluaran, isi `messages` boleh lebih dari 3."""
 
     if group_context:
@@ -386,11 +402,5 @@ Jangan ada teks di luar JSON. Khusus laporan pengeluaran, isi `messages` boleh l
             uname = entry.get("username") or "?"
             msg = entry.get("message", "")
             prompt += f"[{uname}]: {msg}\n"
-
-    if chat_history:
-        prompt += f"\n\n=== Riwayat kamu dengan {username} ===\n"
-        for msg in chat_history:
-            role_name = username if msg['role'] == 'user' else "Kira"
-            prompt += f"{role_name}: {msg['message']}\n"
 
     return prompt
