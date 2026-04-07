@@ -48,6 +48,9 @@ dp = Dispatcher()
 genai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 mistral_client = Mistral(api_key=MISTRAL_API_KEY) if MISTRAL_API_KEY else None
 
+# Cache info bot agar tidak get_me terus menerus
+bot_info_cache = {"id": None, "username": None}
+
 # ================= MYSQL POOL =================
 DB_CONFIG = {
     'host': os.getenv("MYSQL_HOST", "localhost"),
@@ -536,9 +539,12 @@ async def handle_mentions(message: types.Message):
             await active_games[chat_id].process_move(user_id, text)
             return
 
-    bot_user = await bot.get_me()
-    bot_id = bot_user.id
-    bot_username = bot_user.username.lower()
+    # Gunakan cache bot info
+    bot_id = bot_info_cache["id"]
+    bot_username = bot_info_cache["username"]
+
+    # Log debug untuk melacak pesan grup yang masuk
+    logging.info(f"📩 [Group {chat_id}] Message from {message.from_user.username or message.from_user.id}: {text[:50]}...")
 
     # Save to group context
     username = message.from_user.username or message.from_user.first_name or "User"
@@ -547,21 +553,27 @@ async def handle_mentions(message: types.Message):
         try:
             await save_group_message(pool, chat_id, user_id, username, text[:500])
         except Exception as e:
-            pass
+            logging.warning(f"Failed to save group message: {e}")
 
     mentioned = False
     is_reply_to_me = False
-    prompt = text
-
-    if message.reply_to_message and message.reply_to_message.from_user.id == bot_id:
+    
+    if message.reply_to_message and bot_id and message.reply_to_message.from_user.id == bot_id:
         is_reply_to_me = True
+        logging.info(f"🎯 Message is a reply to bot (is_reply_to_me=True)")
 
     if message.entities:
         for entity in message.entities:
             if entity.type == "mention":
                 mentioned_text = text[entity.offset : entity.offset + entity.length]
-                if mentioned_text.lower() == f"@{bot_username}":
+                if bot_username and mentioned_text.lower() == f"@{bot_username}":
                     mentioned = True
+                    logging.info(f"🎯 Bot mentioned via @{bot_username} (mentioned=True)")
+                    break
+            elif entity.type == "text_mention" and entity.user:
+                if bot_id and entity.user.id == bot_id:
+                    mentioned = True
+                    logging.info("🎯 Bot mentioned via text_mention (mentioned=True)")
                     break
 
     if not (mentioned or is_reply_to_me):
@@ -1048,6 +1060,9 @@ async def main():
         reminder_task = asyncio.create_task(reminder_worker(bot))
     
     me = await bot.get_me()
+    bot_info_cache["id"] = me.id
+    bot_info_cache["username"] = me.username.lower()
+    
     print(f"\n🚀 Bot @{me.username} ONLINE!")
     print(f"   Mode: Multi-Model Selector")
     print(f"   Daily Image Quota: {quota_manager.max_images_per_day}/hari\n")

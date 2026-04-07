@@ -83,6 +83,8 @@ async def handle_aglaea_message(message: types.Message, pool, bot_username: str 
     
     try:
         raw = await ask_ai(prompt, text_for_ai, chat_history=history, pool=pool, user_id=user_id, message=message)
+        import logging
+        logging.info(f"🤖 [User {user_id}] AI Response: {raw[:100]}...")
     finally:
         typing_task.cancel()
         try:
@@ -98,6 +100,8 @@ async def handle_aglaea_message(message: types.Message, pool, bot_username: str 
         send_message = data.get("send_message")
         is_expense_report = data.get("is_expense_report", False)
     except json.JSONDecodeError:
+        import logging
+        logging.warning(f"⚠️ Failed to parse AI JSON response: {raw[:100]}...")
         messages = [raw]
         send_to_username = None
         send_message = None
