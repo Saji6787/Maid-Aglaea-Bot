@@ -119,9 +119,20 @@ async def reminder_worker(bot: Bot):
 
                     for row in rows:
                         try:
+                            templates = [
+                                f"Halo! Cuma mau ngingetin buat <b>{row['note']}</b> ya. 😉",
+                                f"Hei, jangan lupa ya: <b>{row['note']}</b>. Semangat!",
+                                f"Permisi, waktunya buat <b>{row['note']}</b> nih. Udah siap?",
+                                f"Ayo, saatnya <b>{row['note']}</b>! Jangan ditunda-tunda ya.",
+                                f"Halo kak, sekadar pengingat: <b>{row['note']}</b>. Jangan lupa ya!",
+                                f"Waktunya <b>{row['note']}</b> sudah tiba. Jangan sampai kelewat ya.",
+                                f"Eh, jangan lupa <b>{row['note']}</b> ya. Tadi katanya mau diingetin.",
+                                f"Reminder: <b>{row['note']}</b>. Sudah dilakukan belum? 😊"
+                            ]
+                            reminder_text = random.choice(templates)
                             await bot.send_message(
                                 chat_id=row['user_id'],
-                                text=f"eh {row['note']}\njangan sampe lupa"
+                                text=reminder_text
                             )
                             # Langsung hapus reminder setelah berhasil dikirim
                             await cur.execute("DELETE FROM reminders_aglaea WHERE id = %s", (row['id'],))
