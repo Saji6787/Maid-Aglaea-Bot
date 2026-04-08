@@ -112,24 +112,45 @@ async def reminder_worker(bot: Bot):
             async with pool.acquire() as conn:
                 async with conn.cursor(aiomysql.DictCursor) as cur:
                     await cur.execute(
-                        "SELECT id, user_id, note FROM reminders_aglaea WHERE is_sent = 0 AND remind_at <= %s",
+                        "SELECT r.id, r.user_id, r.note, t.deadline_at "
+                        "FROM reminders_aglaea r "
+                        "LEFT JOIN tasks t ON r.task_id = t.id "
+                        "WHERE r.is_sent = 0 AND r.remind_at <= %s",
                         (current_date_str,)
                     )
                     rows = await cur.fetchall()
 
                     for row in rows:
                         try:
-                            templates = [
-                                f"Halo! Cuma mau ngingetin buat <b>{row['note']}</b> ya. 😉",
-                                f"Hei, jangan lupa ya: <b>{row['note']}</b>. Semangat!",
-                                f"Permisi, waktunya buat <b>{row['note']}</b> nih. Udah siap?",
-                                f"Ayo, saatnya <b>{row['note']}</b>! Jangan ditunda-tunda ya.",
-                                f"Halo kak, sekadar pengingat: <b>{row['note']}</b>. Jangan lupa ya!",
-                                f"Waktunya <b>{row['note']}</b> sudah tiba. Jangan sampai kelewat ya.",
-                                f"Eh, jangan lupa <b>{row['note']}</b> ya. Tadi katanya mau diingetin.",
-                                f"Reminder: <b>{row['note']}</b>. Sudah dilakukan belum? 😊"
+                            # New structured format (User Request)
+                            reminder_text = (
+                                "[ !!! ] <b>Pengingat</b> [ !!! ]\n"
+                                f"{row['note']}\n"
+                            )
+                            
+                            if row.get('deadline_at'):
+                                deadline_dt = row['deadline_at']
+                                # Handle naive datetime from MySQL (assume UTC)
+                                if deadline_dt.tzinfo is None:
+                                    deadline_dt = pytz.UTC.localize(deadline_dt)
+                                deadline_local = deadline_dt.astimezone(DEFAULT_TZ)
+                                deadline_str = deadline_local.strftime("%d %b %Y, %H:%M WIB")
+                                reminder_text += f"Deadline: {deadline_str}\n"
+
+                            natural_comments = [
+                                "Tuan, jangan sampai lupa ya. Saya sudah catat ini sebelumnya.",
+                                "Permisi tuan, sudah waktunya untuk hal ini dilakukan.",
+                                "Sekadar pengingat buat tuan, jangan ditunda-tunda ya.",
+                                "Tuan, catatan ini sudah waktunya. Mohon diperhatikan.",
+                                "Jangan sampai kelewat ya tuan, nanti repot lho.",
+                                "Saya hanya menjalankan tugas untuk mengingatkan tuan soal ini.",
+                                "Sudah masuk jadwalnya nih tuan. Semangat ya!",
+                                "Tuan, ini sudah waktunya. Jangan lupa diselesaikan ya.",
+                                "Izin mengingatkan tuan, hal ini sudah harus dilakukan."
                             ]
-                            reminder_text = random.choice(templates)
+                            comment = random.choice(natural_comments)
+                            reminder_text += f"\n{comment}"
+
                             await bot.send_message(
                                 chat_id=row['user_id'],
                                 text=reminder_text
