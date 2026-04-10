@@ -400,6 +400,44 @@ async def cmd_riwayat(message: types.Message):
             
             await message.reply(reply_text.strip())
 
+@dp.message(Command("convertmoney"))
+async def cmd_convertmoney(message: types.Message):
+    # Regex to parse: /convertmoney 500rb Rupiah to Dollar
+    # Match: (amount) (from_curr) to (to_curr)
+    match = re.search(r'/convertmoney\s+([\d.,]+[a-z]*)\s+([a-z\s]+)\s+to\s+([a-z\s]+)', message.text, re.IGNORECASE)
+    if not match:
+        await message.reply("Format salah. Contoh: <code>/convertmoney 100rb Rupiah to Dollar</code>")
+        return
+
+    amount_str = match.group(1)
+    from_curr_name = match.group(2).strip()
+    to_curr_name = match.group(3).strip()
+    
+    await message.reply("Mohon tunggu sebentar...")
+    
+    from aglaea.currency import parse_amount, get_iso_code, fetch_currency_data, format_currency
+    
+    amount = parse_amount(amount_str)
+    from_iso = get_iso_code(from_curr_name) or from_curr_name.upper()
+    to_iso = get_iso_code(to_curr_name) or to_curr_name.upper()
+    
+    try:
+        data, err = await fetch_currency_data(amount, from_iso, to_iso)
+        if err:
+            await message.answer(f"❌ Error: {err}")
+            return
+        
+        res_text = (
+            f"💰 <b>Konversi Mata Uang</b>\n"
+            f"💵 {format_currency(amount, from_iso)} ➔ <b>{format_currency(data['result'], to_iso)}</b>\n"
+            f"📊 Rate: 1 {from_iso} = {data['rate']:.4f} {to_iso}\n"
+            f"📈 Trend: {data['trend']}\n"
+            f"📅 Data per: {data['date']}"
+        )
+        await message.answer(res_text)
+    except Exception as e:
+        await message.answer(f"❌ Terjadi kesalahan: {str(e)}")
+
 @dp.message(Command("features", "help", "fitur"))
 async def cmd_features(message: types.Message):
     bot_info = await bot.get_me()
@@ -432,6 +470,11 @@ async def cmd_features(message: types.Message):
         f"• /games — Mulai permainan (Max 2 Player)\n"
         f"• ❤️ Sistem HP & Timer 45 detik\n"
         f"• 📜 AI Narrator & Lore unik tiap kata\n\n"
+        
+        f"💰 <b>6. Cek Kurs & Mata Uang</b>\n"
+        f"• Cara pakai: <i>'Agy, 100rb rupiah ke dollar berapa?'</i>\n"
+        f"• Command: <code>/convertmoney 50rb IDR to USD</code>\n"
+        f"• 📈 Informasi kenaikan/penurunan harga\n\n"
         
         f"💡 <b>Panduan Penggunaan</b>\n"
         f"• Di grup: Wajib mention bot <code>@{username}</code>\n"

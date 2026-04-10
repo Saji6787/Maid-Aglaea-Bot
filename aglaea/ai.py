@@ -272,14 +272,25 @@ MISTRAL_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "post_delayed_recommendation",
-            "description": "Kirim rekomendasi akhir setelah memberitahu user untuk menunggu. Gunakan ini HANYA saat semua kriteria sudah terbantu dan user siap menerima hasil.",
+            "name": "convert_currency",
+            "description": "Konversi mata uang menggunakan real-time API. Gunakan ini jika user ingin tahu nilai tukar uang. Contoh: '100rb rupiah ke dollar'.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "payload": {"type": "string", "description": "Konten rekomendasi lengkap dalam format HTML. Jangan terlalu panjang, fokus pada kualitas."}
+                    "amount_str": {
+                        "type": "string",
+                        "description": "Jumlah uang (contoh: '100rb', '500.000', '1 juta')"
+                    },
+                    "from_currency": {
+                        "type": "string",
+                        "description": "Mata uang asal (contoh: 'rupiah', 'USD', 'IDR')"
+                    },
+                    "to_currency": {
+                        "type": "string",
+                        "description": "Mata uang tujuan (contoh: 'dollar', 'EUR', 'JPY')"
+                    }
                 },
-                "required": ["payload"]
+                "required": ["amount_str", "from_currency", "to_currency"]
             }
         }
     }
@@ -319,6 +330,36 @@ async def process_tool_call(pool, user_id, tool_call, message=None):
         return await tools.list_tasks(pool, user_id)
     elif name == "complete_task":
         return await tools.complete_task(pool, args.get("task_id"))
+    elif name == "convert_currency" and message:
+        amount_str = args.get("amount_str")
+        from_curr_name = args.get("from_currency")
+        to_curr_name = args.get("to_currency")
+        
+        # Kirim pesan tunggu segera
+        await message.answer("Mohon tunggu sebentar...")
+        
+        from aglaea.currency import parse_amount, get_iso_code, fetch_currency_data, format_currency
+        
+        amount = parse_amount(amount_str)
+        from_iso = get_iso_code(from_curr_name) or from_curr_name.upper()
+        to_iso = get_iso_code(to_curr_name) or to_curr_name.upper()
+        
+        try:
+            data, err = await fetch_currency_data(amount, from_iso, to_iso)
+            if err:
+                return json.dumps({"error": err})
+            
+            res_text = (
+                f"💰 <b>Konversi Mata Uang</b>\n"
+                f"💵 {format_currency(amount, from_iso)} ➔ <b>{format_currency(data['result'], to_iso)}</b>\n"
+                f"📊 Rate: 1 {from_iso} = {data['rate']:.4f} {to_iso}\n"
+                f"📈 Trend: {data['trend']}\n"
+                f"📅 Data per: {data['date']}"
+            )
+            await message.answer(res_text)
+            return json.dumps({"status": "success", "message": "Konversi berhasil ditampilkan ke user."})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
     elif name == "post_delayed_recommendation" and message:
         payload = args.get("payload", "")
         # Kirim pesan tunggu segera ke user
